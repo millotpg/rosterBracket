@@ -210,6 +210,19 @@ class CupResultsResponse(BaseModel):
     round_complete: bool
 
 
+class SingleRaceRequest(BaseModel):
+    placements: list[PlayerPlacement]
+
+
+class SingleRaceResultResponse(BaseModel):
+    round_number: int
+    cup_number: int
+    race_number: int
+    results: list[PlayerRaceResult]
+    cup_complete: bool
+    round_complete: bool
+
+
 # ---------------------------------------------------------------------------
 # UI routes — public
 # ---------------------------------------------------------------------------
@@ -647,6 +660,154 @@ def correct_cup_results(round_number: int, cup_number: int,
     return _build_cup_response(round_number, cup_number, new_cup, body,
                                 player_by_name, team_by_player, scores_before,
                                 new_round.completed)
+
+
+# ---------------------------------------------------------------------------
+# API routes — per-race results (submit and correct one race at a time)
+# ---------------------------------------------------------------------------
+
+def _validate_single_race(cup, placements: list[PlayerPlacement]) -> dict:
+    """Returns player_by_name dict; raises HTTPException on bad input."""
+    player_by_name: dict[str, Player] = {}
+    for team in cup.teams:
+        for player in team.players:
+            player_by_name[player.name.lower()] = player
+
+    expected = set(player_by_name.keys())
+    submitted = {p.player_name.lower() for p in placements}
+    if submitted != expected:
+        missing = sorted(expected - submitted)
+        extra = sorted(submitted - expected)
+        parts = []
+        if missing: parts.append(f"missing: {missing}")
+        if extra:   parts.append(f"unknown players: {extra}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Player mismatch — {'; '.join(parts)}")
+
+    places = sorted(p.place for p in placements)
+    if places != list(range(1, len(expected) + 1)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Places must be 1–{len(expected)} with no duplicates.")
+    return player_by_name
+
+
+@app.post("/rounds/{round_number}/cups/{cup_number}/races/{race_number}/results",
+          response_model=SingleRaceResultResponse)
+def submit_race_result(round_number: int, cup_number: int,
+                        race_number: int, body: SingleRaceRequest):
+    """Submit results for one race. Can be called race-by-race as each finishes."""
+    if _tournament is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Tournament has not started. POST /tournament/start first.")
+    if _tournament.is_complete:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Tournament is complete; no more results can be submitted.")
+    if round_number != _tournament.current_round:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Active round is {_tournament.current_round}, not {round_number}.")
+    if race_number < 1 or race_number > RACES_PER_CUP:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Race number must be 1–{RACES_PER_CUP}.")
+
+    active_round = _tournament._active_round()
+    if cup_number < 1 or cup_number > len(active_round.cups):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Cup {cup_number} not found in round {round_number}.")
+
+    cup = active_round.cups[cup_number - 1]
+    race_idx = race_number - 1
+    if cup.races[race_idx].completed:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=f"Race {race_number} of round {round_number} cup {cup_number} "
+                                   f"has already been submitted.")
+
+    player_by_name = _validate_single_race(cup, body.placements)
+    placements = [(player_by_name[p.player_name.lower()], p.place) for p in body.placements]
+    _tournament.record_race_results(cup_number - 1, race_idx, placements)
+
+    cup_complete = cup.completed
+    round_complete = active_round.completed
+    if round_complete and not _tournament.is_complete:
+        _tournament.advance_round()
+
+    results = [
+        PlayerRaceResult(
+            player_name=player_by_name[p.player_name.lower()].name,
+            team_name=next(t for t in cup.teams if any(
+                pl.name.lower() == p.player_name.lower() for pl in t.players)).name,
+            place=p.place,
+            points=PLACEMENT_SCORES.get(p.place, 0),
+        )
+        for p in sorted(body.placements, key=lambda p: p.place)
+    ]
+    return SingleRaceResultResponse(
+        round_number=round_number,
+        cup_number=cup_number,
+        race_number=race_number,
+        results=results,
+        cup_complete=cup_complete,
+        round_complete=round_complete,
+    )
+
+
+@app.patch("/rounds/{round_number}/cups/{cup_number}/races/{race_number}/results",
+           response_model=SingleRaceResultResponse)
+def correct_race_result(round_number: int, cup_number: int,
+                         race_number: int, body: SingleRaceRequest, request: Request):
+    """Correct already-submitted results for one race. Rebuilds in-memory state from DB."""
+    global _roster, _tournament, _db
+
+    if not _is_admin(request):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+    if _tournament is None or _db is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active tournament.")
+    if race_number < 1 or race_number > RACES_PER_CUP:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Race number must be 1–{RACES_PER_CUP}.")
+
+    target_round = next((r for r in _tournament.rounds if r.round_number == round_number), None)
+    if target_round is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Round {round_number} not found.")
+    if cup_number < 1 or cup_number > len(target_round.cups):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Cup {cup_number} not found in round {round_number}.")
+
+    cup = target_round.cups[cup_number - 1]
+    player_by_name = _validate_single_race(cup, body.placements)
+
+    old_tournament_id = _db.tournament_id
+    _db.delete_race_results(old_tournament_id, round_number, cup_number, race_number)
+    placements = [(player_by_name[p.player_name.lower()], p.place) for p in body.placements]
+    _db.save_race_result(round_number, cup_number - 1, race_number - 1, placements)
+
+    new_tourney, new_db = TournamentDB.load_tournament(DB_PATH, old_tournament_id)
+    _db.close()
+    _tournament = new_tourney
+    _db = new_db
+    _roster = list(new_tourney.teams)
+
+    new_round = next(r for r in _tournament.rounds if r.round_number == round_number)
+    new_cup = new_round.cups[cup_number - 1]
+
+    results = [
+        PlayerRaceResult(
+            player_name=player_by_name[p.player_name.lower()].name,
+            team_name=next(t for t in new_cup.teams if any(
+                pl.name.lower() == p.player_name.lower() for pl in t.players)).name,
+            place=p.place,
+            points=PLACEMENT_SCORES.get(p.place, 0),
+        )
+        for p in sorted(body.placements, key=lambda p: p.place)
+    ]
+    return SingleRaceResultResponse(
+        round_number=round_number,
+        cup_number=cup_number,
+        race_number=race_number,
+        results=results,
+        cup_complete=new_cup.completed,
+        round_complete=new_round.completed,
+    )
 
 
 # ---------------------------------------------------------------------------

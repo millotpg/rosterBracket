@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS race_results (
 
 class TournamentDB:
     def __init__(self, path: str = "tournament.db"):
-        self.conn = sqlite3.connect(path)
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -262,6 +262,22 @@ class TournamentDB:
             ph = ",".join("?" * len(race_ids))
             cur.execute(f"DELETE FROM race_results WHERE race_id IN ({ph})", race_ids)
             cur.execute(f"UPDATE races SET completed=0 WHERE id IN ({ph})", race_ids)
+        self.conn.commit()
+
+    def delete_race_results(self, tournament_id: int, round_number: int,
+                             cup_number: int, race_number: int):
+        """Delete race_results for one race (race_number is 1-indexed) and reset completed=0."""
+        cur = self.conn.cursor()
+        race_row = cur.execute("""
+            SELECT r.id FROM races r
+            JOIN cups   c  ON r.cup_id   = c.id
+            JOIN rounds rd ON c.round_id = rd.id
+            WHERE rd.tournament_id = ? AND rd.round_number = ? AND c.cup_number = ?
+              AND r.race_number = ?
+        """, (tournament_id, round_number, cup_number, race_number - 1)).fetchone()
+        if race_row:
+            cur.execute("DELETE FROM race_results WHERE race_id = ?", (race_row["id"],))
+            cur.execute("UPDATE races SET completed=0 WHERE id = ?", (race_row["id"],))
         self.conn.commit()
 
     def get_cup_results(self, tournament_id: int, round_number: int, cup_number: int) -> list[dict]:
