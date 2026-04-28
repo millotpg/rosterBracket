@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Admin — Mario Kart Tournament{% endblock %}
+{% block content %}
+<header class="site-header admin-header">
+  <h1>🏆 Admin Panel</h1>
+  <form method="POST" action="/auth/logout" style="margin:0">
+    <button type="submit" class="btn btn-sm">Logout</button>
+  </form>
+</header>
+
+<nav class="tab-bar">
+  <button class="tab-btn active" data-tab="status">Status</button>
+  <button class="tab-btn" data-tab="tourney">Tournament</button>
+  <button class="tab-btn" data-tab="results">Results</button>
+  <button class="tab-btn" data-tab="teams">Teams</button>
+</nav>
+
+<!-- ── Tab: Status ── -->
+<div id="tab-status" class="tab-panel">
+  <div class="container">
+    <div id="admin-state-banner" class="state-banner">Loading…</div>
+
+    <section class="card">
+      <h2>Standings</h2>
+      <table class="lb-table">
+        <thead><tr><th>#</th><th>Team</th><th>Score</th></tr></thead>
+        <tbody id="admin-lb-body">
+          <tr><td colspan="3" class="muted">Loading…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Now Racing — Round <span id="admin-round-label">…</span></h2>
+      <div class="cup-grid" id="admin-cup-grid">
+        <div class="cup-card placeholder" id="admin-cup-card-1">Loading…</div>
+        <div class="cup-card placeholder" id="admin-cup-card-2">Loading…</div>
+      </div>
+    </section>
+
+    <section class="card" id="admin-next-up-section" hidden>
+      <h2>Up Next — Projected Round <span id="admin-next-round-label"></span></h2>
+      <div class="cup-grid">
+        <div class="cup-card" id="admin-next-cup-1"></div>
+        <div class="cup-card" id="admin-next-cup-2"></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ── Tab: Tournament Status ── -->
+<div id="tab-tourney" class="tab-panel" hidden>
+  <div class="container" id="tourney-tab-content">
+    <p class="muted" style="padding:1rem">Loading…</p>
+  </div>
+</div>
+
+<!-- ── Tab: Results ── -->
+<div id="tab-results" class="tab-panel" hidden>
+  <div class="container">
+    <div class="controls-bar">
+      <label>Round
+        <select id="round-select"></select>
+      </label>
+      <label>Cup
+        <select id="cup-select">
+          <option value="1">Cup 1</option>
+          <option value="2">Cup 2</option>
+        </select>
+      </label>
+      <button id="load-results-btn" class="btn">Load</button>
+    </div>
+    <div id="results-form-area"></div>
+  </div>
+</div>
+
+<!-- ── Tab: Teams ── -->
+<div id="tab-teams" class="tab-panel" hidden>
+  <div class="container">
+    <div id="teams-lock-banner" class="info-banner" hidden>
+      🔒 Roster is locked — tournament in progress.
+    </div>
+    <div id="teams-table-area"></div>
+    <div id="add-team-area"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/admin.js"></script>
+{% endblock %}

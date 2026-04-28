@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Mario Kart Tournament{% endblock %}
+{% block content %}
+<header class="site-header">
+  <h1>🏆 Mario Kart Tournament</h1>
+  <div id="state-banner" class="state-banner">Loading…</div>
+</header>
+
+<main class="container">
+  <section class="card" id="leaderboard-section">
+    <h2>Standings</h2>
+    <table class="lb-table">
+      <thead>
+        <tr><th>#</th><th>Team</th><th>Score</th></tr>
+      </thead>
+      <tbody id="lb-body">
+        <tr><td colspan="3" class="muted">Loading standings…</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card" id="now-racing-section">
+    <h2>Now Racing — Round <span id="round-label">…</span></h2>
+    <div class="cup-grid" id="cup-grid">
+      <div class="cup-card placeholder" id="cup-card-1">Loading…</div>
+      <div class="cup-card placeholder" id="cup-card-2">Loading…</div>
+    </div>
+  </section>
+
+  <section class="card" id="next-up-section" hidden>
+    <h2>Up Next — Projected Round <span id="next-round-label"></span></h2>
+    <div class="cup-grid">
+      <div class="cup-card" id="next-cup-1"></div>
+      <div class="cup-card" id="next-cup-2"></div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <span id="refresh-indicator" class="muted">Refreshing every 15s</span>
+  &nbsp;·&nbsp;
+  <a href="/admin/login">Admin</a>
+</footer>
+{% endblock %}
+{% block scripts %}
+<script src="/static/public.js"></script>
+{% endblock %}
