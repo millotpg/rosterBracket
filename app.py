@@ -18,7 +18,7 @@ app = FastAPI(title="Mario Kart Tournament")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
-DB_PATH = "mariokart.db"
+DB_PATH = "db/mariokart.db"
 
 # ---------------------------------------------------------------------------
 # Auth — simple signed-cookie session, credentials hardcoded as defaults
@@ -40,6 +40,30 @@ def _is_admin(request: Request) -> bool:
 _roster: list[Team] = []
 _tournament: Optional[Tournament] = None
 _db: Optional[TournamentDB] = None
+
+
+@app.on_event("startup")
+def _restore_state():
+    """If mariokart.db contains an incomplete tournament, rebuild in-memory state from it."""
+    global _roster, _tournament, _db
+    if not os.path.exists(DB_PATH):
+        return
+
+    tmp = TournamentDB(DB_PATH)
+    rows = tmp.list_tournaments()
+    tmp.close()
+
+    incomplete = [r for r in rows if not bool(r["is_complete"])]
+    if not incomplete:
+        return
+
+    tournament_id = incomplete[0]["id"]
+    restored, restored_db = TournamentDB.load_tournament(DB_PATH, tournament_id)
+    _tournament = restored
+    _db = restored_db
+    _roster = list(restored.teams)
+    print(f"[startup] Restored tournament #{tournament_id} "
+          f"(round {restored.current_round}/{TOTAL_ROUNDS})")
 
 
 # ---------------------------------------------------------------------------
