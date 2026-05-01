@@ -73,8 +73,8 @@ def start_tournament():
         print(f"  Cup {cup['cup_number']}: {', '.join(cup['teams'])}")
 
 
-def populate_race(round_num, cup, race):
-    # Fetch status to find which players are in this cup
+def populate_cup(round_num, cup):
+    """Submit random cumulative scores for all players in a cup."""
     with urllib.request.urlopen(f"{BASE}/tournament/status") as resp:
         active_cups = json.loads(resp.read())["active_cups"]
 
@@ -83,14 +83,12 @@ def populate_race(round_num, cup, race):
         print(f"Cup {cup} not found in active cups")
         return
 
-    # Flatten "Player1 & Player2" team strings into individual player names
     players = [p for team in cup_data["teams"] for p in team.split(" & ")]
-    random.shuffle(players)
-    placements = [{"player_name": p, "place": i + 1} for i, p in enumerate(players)]
+    placements = [{"player_name": p, "score": random.randint(4, 60)} for p in players]
 
     payload = json.dumps({"placements": placements}).encode()
     req = urllib.request.Request(
-        f"{BASE}/rounds/{round_num}/cups/{cup}/races/{race}/results",
+        f"{BASE}/rounds/{round_num}/cups/{cup}/results",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -98,19 +96,18 @@ def populate_race(round_num, cup, race):
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read())
 
-    print(f"R{round_num} Cup{cup} Race{race} — "
-          + ", ".join(f"P{r['place']}:{r['player_name']}" for r in data["results"][:3])
+    top3 = sorted(data["placements"], key=lambda r: r["score"], reverse=True)[:3]
+    print(f"R{round_num} Cup{cup} — "
+          + ", ".join(f"{r['player_name']}:{r['score']}" for r in top3)
           + " …")
 
 
 if __name__ == "__main__":
     populate_users()
-
+    breakpoint()
     start_tournament()
-    
-    for round in range(1, 7):
-        for group in range(1, 3):
-            for race in range(1, 5):
-                populate_race(round, group, race)
-        
+    for round_num in range(1, 7):
+        for cup in range(1, 3):
+            populate_cup(round_num, cup)
+
 

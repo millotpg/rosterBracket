@@ -40,20 +40,12 @@ class Tournament:
         return round_
 
     def advance_round(self) -> Round:
-        """
-        Close the current round and open the next one.
-        Cup assignment is score-based: top half → Cup 1, bottom half → Cup 2.
-        Raises if the current round still has incomplete races, or all rounds
-        are finished.
-        """
         if self.current_round == 0:
             raise RuntimeError("Call start_first_round() to begin the tournament.")
         if self.current_round >= TOTAL_ROUNDS:
             raise RuntimeError("All rounds have been completed.")
         if not self._active_round().completed:
-            raise RuntimeError(
-                f"Round {self.current_round} still has incomplete races."
-            )
+            raise RuntimeError(f"Round {self.current_round} still has incomplete cups.")
 
         next_num = self.current_round + 1
         round_ = Round(round_number=next_num, all_teams=self.teams)
@@ -64,13 +56,13 @@ class Tournament:
             self.db.save_round(round_)
         return round_
 
-    def record_race_results(
-        self, cup_idx: int, race_idx: int, placements: list[tuple[Player, int]]
+    def record_cup_results(
+        self, cup_idx: int, placements: list[tuple[Player, int]]
     ):
-        """Record results for one race. cup_idx is 0-based, race_idx is 0-based."""
-        self._active_round().record_race_results(cup_idx, race_idx, placements)
+        """Record cup-level scores. cup_idx is 0-based."""
+        self._active_round().record_cup_results(cup_idx, placements)
         if self.db:
-            self.db.save_race_result(self.current_round, cup_idx, race_idx, placements)
+            self.db.save_cup_results(self.current_round, cup_idx, placements)
 
     # ------------------------------------------------------------------
     # Leaderboard
@@ -78,12 +70,10 @@ class Tournament:
 
     @property
     def leaderboard(self) -> list[Team]:
-        """All teams sorted by total score descending."""
         return sorted(self.teams, key=lambda t: t.total_score, reverse=True)
 
     @property
     def podium(self) -> list[Team]:
-        """Top three teams."""
         return self.leaderboard[:3]
 
     def print_leaderboard(self):

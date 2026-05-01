@@ -105,20 +105,6 @@ async function refreshStatus() {
     if (c2) c2.outerHTML = buildCupCard(data.active_cups[1]).replace('<div ', '<div id="admin-cup-card-2" ');
   }
 
-  // Projection
-  const nextSec = document.getElementById('admin-next-up-section');
-  if (nextSec) {
-    const proj = data.next_round_projection;
-    nextSec.hidden = !proj;
-    if (proj) {
-      const nl = document.getElementById('admin-next-round-label');
-      if (nl) nl.textContent = proj.round_number;
-      const nc1 = document.getElementById('admin-next-cup-1');
-      const nc2 = document.getElementById('admin-next-cup-2');
-      if (nc1) nc1.outerHTML = buildCupCard(proj.cups[0]).replace('<div ', '<div id="admin-next-cup-1" ');
-      if (nc2) nc2.outerHTML = buildCupCard(proj.cups[1]).replace('<div ', '<div id="admin-next-cup-2" ');
-    }
-  }
 }
 
 // ── Results tab ───────────────────────────────────────────────────────────────
@@ -148,111 +134,101 @@ async function loadResultsTab() {
   document.getElementById('load-results-btn').onclick = () => {
     const rn = parseInt(roundSel.value);
     const cn = parseInt(document.getElementById('cup-select').value);
-    const raceNum = parseInt(document.getElementById('race-select').value);
-    loadRaceResultsForm(rn, cn, raceNum);
+    loadCupScoreForm(rn, cn);
   };
 
-  loadRaceResultsForm(status.current_round, 1, 1);
+  loadCupScoreForm(status.current_round, 1);
 }
 
-async function loadRaceResultsForm(rn, cn, raceNum) {
+async function loadCupScoreForm(rn, cn) {
   const area = document.getElementById('results-form-area');
   area.innerHTML = '<p class="muted" style="padding:1rem">Loading…</p>';
 
-  // Fetch all existing results for this cup to check if this specific race is done
-  let existing = { races: [] };
+  let existing = { placements: [] };
   try {
     const r = await fetch(`/rounds/${rn}/cups/${cn}/results`);
     if (r.ok) existing = await r.json();
   } catch (_) {}
 
-  // Find this race's results (race_number is 1-indexed in the response)
-  const existingRace = existing.races.find(r => r.race_number === raceNum) || null;
-  const isCorrection = !!existingRace;
+  const isCorrection = existing.placements.length > 0;
 
-  // Determine player list
+  // Build player list from existing data or from active cups in status
   let players = [];
-  if (existingRace && existingRace.results && existingRace.results.length > 0) {
-    players = existingRace.results.map(r => r.player_name);
+  if (isCorrection) {
+    players = existing.placements.map(p => p.player_name);
   } else {
     const status = _statusData;
     if (status && status.active_cups) {
       const cupData = status.active_cups.find(c => c.cup_number === cn);
       if (cupData) players = cupData.teams.flatMap(t => t.split(' & '));
     }
-    // Fall back to any completed race in this cup
-    if (players.length === 0 && existing.races.length > 0) {
-      players = existing.races[0].results.map(r => r.player_name);
-    }
   }
 
-  const placementMap = {};
-  if (existingRace) {
-    existingRace.results.forEach(r => { placementMap[r.player_name] = r.place; });
-  }
+  const scoreMap = {};
+  existing.placements.forEach(p => { scoreMap[p.player_name] = p.score; });
 
   const rows = players.map(p => {
-    const place = placementMap[p] || '';
+    const score = scoreMap[p] || '';
     return `<tr>
       <td>${p}</td>
-      <td><input type="number" min="1" max="12" value="${place}"
-           data-player="${p}" class="place-input" required></td>
+      <td><input type="number" min="1" max="240" value="${score}"
+           data-player="${p}" class="score-input" required></td>
     </tr>`;
   }).join('');
 
-  const btnLabel = isCorrection ? 'Correct Race' : 'Submit Race';
+  const btnLabel = isCorrection ? 'Correct Cup' : 'Submit Cup';
   const method = isCorrection ? 'PATCH' : 'POST';
 
   area.innerHTML = `
     <div class="card" style="margin-top:0">
-      <h2>Round ${rn} · Cup ${cn} · Race ${raceNum}</h2>
+      <h2>Round ${rn} · Cup ${cn} — Scores</h2>
+      <p class="muted" style="margin-bottom:0.75rem;font-size:0.85rem">
+        Enter each player's total points earned across all 4 races.
+      </p>
       <div id="results-msg"></div>
-      <fieldset class="race-fieldset">
-        <legend>Race ${raceNum}</legend>
-        <table class="race-table">
-          <thead><tr><th>Player</th><th>Place (1–12)</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </fieldset>
-      <button class="btn" id="submit-results-btn" style="margin-top:0.75rem">${btnLabel}</button>
+      <table class="race-table" style="margin-bottom:1rem">
+        <thead><tr><th>Player</th><th>Total Score</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <button class="btn" id="submit-results-btn">${btnLabel}</button>
     </div>`;
 
   document.getElementById('submit-results-btn').onclick = () =>
-    submitRaceResult(rn, cn, raceNum, players, method);
+    submitCupScores(rn, cn, players, method);
 }
 
-async function submitRaceResult(rn, cn, raceNum, players, method) {
+async function submitCupScores(rn, cn, players, method) {
   const btn = document.getElementById('submit-results-btn');
   btn.disabled = true;
   btn.textContent = 'Saving…';
 
   const placements = players.map(p => {
-    const inp = document.querySelector(`.place-input[data-player="${p}"]`);
-    return { player_name: p, place: parseInt(inp ? inp.value : 0) };
+    const inp = document.querySelector(`.score-input[data-player="${p}"]`);
+    return { player_name: p, score: parseInt(inp ? inp.value : 0) };
   });
 
   try {
-    const r = await fetch(`/rounds/${rn}/cups/${cn}/races/${raceNum}/results`, {
+    const r = await fetch(`/rounds/${rn}/cups/${cn}/results`, {
       method,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ placements }),
     });
     const data = await r.json();
     if (r.ok) {
-      const extra = data.cup_complete ? ' Cup complete!' : '';
-      showMsg('results-msg', `✓ Race ${raceNum} saved.${extra}`, 'success');
-      btn.textContent = 'Correct Race';
+      const extra = data.round_complete ? ' Round complete!' : '';
+      showMsg('results-msg', `✓ Cup ${cn} scores saved.${extra}`, 'success');
+      btn.textContent = 'Correct Cup';
       btn.disabled = false;
       refreshStatus();
     } else {
       showMsg('results-msg', `Error: ${data.detail || JSON.stringify(data)}`, 'error');
-      btn.textContent = method === 'PATCH' ? 'Correct Race' : 'Submit Race';
+      btn.textContent = method === 'PATCH' ? 'Correct Cup' : 'Submit Cup';
       btn.disabled = false;
     }
   } catch (e) {
     showMsg('results-msg', `Network error: ${e.message}`, 'error');
     btn.disabled = false;
-    btn.textContent = method === 'PATCH' ? 'Correct Race' : 'Submit Race';
+    btn.textContent = method === 'PATCH' ? 'Correct Cup' : 'Submit Cup';
   }
 }
 

@@ -35,24 +35,22 @@ db = TournamentDB(DB_PATH)
 tourney = Tournament(teams, db=db)
 
 # ---------------------------------------------------------------------------
-# Helper: randomly assign finishing places to all players in a race
+# Helper: generate random cumulative cup scores for all players
 # ---------------------------------------------------------------------------
-def simulate_race(race) -> list[tuple[Player, int]]:
-    all_players = [p for team in race.teams for p in team.players]
-    random.shuffle(all_players)
-    return [(player, place + 1) for place, player in enumerate(all_players)]
+def simulate_cup_scores(cup) -> list[tuple[Player, int]]:
+    all_players = [p for team in cup.teams for p in team.players]
+    return [(player, random.randint(4, 60)) for player in all_players]
 
 def print_cup(cup_idx: int, cup, label: str):
     team_names = ", ".join(t.name for t in cup.teams)
     print(f"\n  Cup {cup.cup_number} [{label}]: {team_names}")
-    for r_idx, race in enumerate(cup.races):
-        placements = simulate_race(race)
-        tourney.record_race_results(cup_idx, r_idx, placements)
-        order = ", ".join(f"{p.name}({pl})" for p, pl in placements)
-        print(f"    Race {r_idx + 1}: {order}")
+    scores = simulate_cup_scores(cup)
+    tourney.record_cup_results(cup_idx, scores)
+    top3 = sorted(scores, key=lambda x: x[1], reverse=True)[:3]
+    print(f"    Top 3: " + ", ".join(f"{p.name}({s})" for p, s in top3))
 
 # ---------------------------------------------------------------------------
-# Round 1: admin-specified cup groups (first 6 vs last 6 by registration order)
+# Round 1: admin-specified cup groups
 # ---------------------------------------------------------------------------
 print("=" * 60)
 print("ROUND 1  —  admin-specified cup groups")
@@ -95,7 +93,7 @@ print(f"\nTournament complete: {tourney.is_complete}")
 db.close()
 
 # ---------------------------------------------------------------------------
-# Round-trip verification: load the saved DB and confirm standings match
+# Round-trip verification
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 60)
 print("LOADING FROM DB  —  round-trip verification")

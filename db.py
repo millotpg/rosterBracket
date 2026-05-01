@@ -29,24 +29,18 @@ CREATE TABLE IF NOT EXISTS rounds (
 CREATE TABLE IF NOT EXISTS cups (
     id         INTEGER PRIMARY KEY,
     round_id   INTEGER NOT NULL REFERENCES rounds(id),
-    cup_number INTEGER NOT NULL
+    cup_number INTEGER NOT NULL,
+    completed  INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS cup_teams (
     cup_id  INTEGER NOT NULL REFERENCES cups(id),
     team_id INTEGER NOT NULL REFERENCES teams(id),
     PRIMARY KEY (cup_id, team_id)
 );
-CREATE TABLE IF NOT EXISTS races (
-    id          INTEGER PRIMARY KEY,
-    cup_id      INTEGER NOT NULL REFERENCES cups(id),
-    race_number INTEGER NOT NULL,
-    completed   INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS race_results (
+CREATE TABLE IF NOT EXISTS cup_results (
     id        INTEGER PRIMARY KEY,
-    race_id   INTEGER NOT NULL REFERENCES races(id),
+    cup_id    INTEGER NOT NULL REFERENCES cups(id),
     player_id INTEGER NOT NULL REFERENCES players(id),
-    place     INTEGER NOT NULL,
     score     INTEGER NOT NULL
 );
 """
@@ -61,14 +55,13 @@ class TournamentDB:
         self.conn.executescript(_DDL)
 
         self.tournament_id: int | None = None
-        # Python object id → DB row id mappings
         self._player_ids: dict[int, int] = {}
         self._team_ids: dict[int, int] = {}
-        # (round_number, cup_idx, race_idx) → DB race row id
-        self._race_ids: dict[tuple[int, int, int], int] = {}
+        # (round_number, cup_idx) → DB cup row id
+        self._cup_ids: dict[tuple[int, int], int] = {}
 
     # ------------------------------------------------------------------
-    # Write path — called by Tournament as state is produced
+    # Write path
     # ------------------------------------------------------------------
 
     def init_tournament(self, teams: list["Team"], total_rounds: int) -> int:
@@ -102,17 +95,12 @@ class TournamentDB:
                 (round_db_id, cup.cup_number),
             )
             cup_db_id = cur.lastrowid
+            self._cup_ids[(round_.round_number, cup.cup_number - 1)] = cup_db_id
             for team in cup.teams:
                 cur.execute(
                     "INSERT INTO cup_teams (cup_id, team_id) VALUES (?, ?)",
                     (cup_db_id, self._team_ids[id(team)]),
                 )
-            for race_idx in range(len(cup.races)):
-                cur.execute(
-                    "INSERT INTO races (cup_id, race_number) VALUES (?, ?)",
-                    (cup_db_id, race_idx),
-                )
-                self._race_ids[(round_.round_number, cup.cup_number - 1, race_idx)] = cur.lastrowid
 
         cur.execute(
             "UPDATE tournaments SET current_round=? WHERE id=?",
@@ -120,23 +108,20 @@ class TournamentDB:
         )
         self.conn.commit()
 
-    def save_race_result(
+    def save_cup_results(
         self,
         round_number: int,
         cup_idx: int,
-        race_idx: int,
         placements: list[tuple["Player", int]],
     ):
-        from RosterEntry import PLACEMENT_SCORES
-
-        race_id = self._race_ids[(round_number, cup_idx, race_idx)]
+        cup_id = self._cup_ids[(round_number, cup_idx)]
         cur = self.conn.cursor()
-        for player, place in placements:
+        for player, score in placements:
             cur.execute(
-                "INSERT INTO race_results (race_id, player_id, place, score) VALUES (?, ?, ?, ?)",
-                (race_id, self._player_ids[id(player)], place, PLACEMENT_SCORES.get(place, 0)),
+                "INSERT INTO cup_results (cup_id, player_id, score) VALUES (?, ?, ?)",
+                (cup_id, self._player_ids[id(player)], score),
             )
-        cur.execute("UPDATE races SET completed=1 WHERE id=?", (race_id,))
+        cur.execute("UPDATE cups SET completed=1 WHERE id=?", (cup_id,))
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -145,19 +130,14 @@ class TournamentDB:
 
     @classmethod
     def load_tournament(cls, path: str, tournament_id: int = 1):
-        """
-        Reconstruct a Tournament from a saved DB file so a crashed or
-        interrupted tournament can be resumed.  Returns (tournament, db).
-        """
         from RosterEntry import Player, Team
-        from Round import Round, Cup, Race
+        from Round import Round, Cup
         from Tournament import Tournament, TOTAL_ROUNDS
 
         db = cls(path)
         conn = db.conn
         db.tournament_id = tournament_id
 
-        # Rebuild players
         players_by_id = {
             row["id"]: Player(row["name"])
             for row in conn.execute("SELECT id, name FROM players").fetchall()
@@ -165,7 +145,6 @@ class TournamentDB:
         for db_id, player in players_by_id.items():
             db._player_ids[id(player)] = db_id
 
-        # Rebuild teams
         teams_by_id: dict[int, Team] = {}
         for row in conn.execute("SELECT id, player1_id, player2_id FROM teams").fetchall():
             team = Team(players_by_id[row["player1_id"]], players_by_id[row["player2_id"]])
@@ -173,15 +152,12 @@ class TournamentDB:
             db._team_ids[id(team)] = row["id"]
         teams = list(teams_by_id.values())
 
-        # Build Tournament shell — bypass __init__ so team-count validation
-        # doesn't reject a DB that used a different TOTAL_TEAMS at creation time
         tourney: Tournament = object.__new__(Tournament)
         tourney.teams = teams
         tourney.rounds = []
         tourney.current_round = 0
         tourney.db = db
 
-        # Replay rounds in order, restoring all scores and match history
         for r_row in conn.execute(
             "SELECT * FROM rounds WHERE tournament_id=? ORDER BY round_number",
             (tournament_id,),
@@ -207,34 +183,21 @@ class TournamentDB:
                 cup: Cup = object.__new__(Cup)
                 cup.cup_number = c_row["cup_number"]
                 cup.teams = cup_teams
-                cup.races = []
+                cup.completed = bool(c_row["completed"])
 
                 cup_idx = c_row["cup_number"] - 1
+                db._cup_ids[(round_number, cup_idx)] = c_row["id"]
 
-                for race_row in conn.execute(
-                    "SELECT * FROM races WHERE cup_id=? ORDER BY race_number",
-                    (c_row["id"],),
-                ).fetchall():
-                    race_idx = race_row["race_number"]
-                    race: Race = object.__new__(Race)
-                    race.teams = cup_teams
-                    race.completed = bool(race_row["completed"])
-                    cup.races.append(race)
-
-                    db._race_ids[(round_number, cup_idx, race_idx)] = race_row["id"]
-
-                    if race.completed:
-                        # Restore player scores
-                        for res in conn.execute(
-                            "SELECT player_id, score FROM race_results WHERE race_id=?",
-                            (race_row["id"],),
-                        ).fetchall():
-                            players_by_id[res["player_id"]].scores.append(res["score"])
-                        # Restore team match history
-                        for team in cup_teams:
-                            for opp in cup_teams:
-                                if opp is not team:
-                                    team.opponents_faced.append(opp)
+                if cup.completed:
+                    for res in conn.execute(
+                        "SELECT player_id, score FROM cup_results WHERE cup_id=?",
+                        (c_row["id"],),
+                    ).fetchall():
+                        players_by_id[res["player_id"]].record_score(res["score"])
+                    for team in cup_teams:
+                        for opp in cup_teams:
+                            if opp is not team:
+                                team.opponents_faced.append(opp)
 
                 round_.cups.append(cup)
 
@@ -244,61 +207,36 @@ class TournamentDB:
         return tourney, db
 
     # ------------------------------------------------------------------
-    # Query path — read historical data without restoring in-memory state
+    # Query path
     # ------------------------------------------------------------------
 
     def delete_cup_results(self, tournament_id: int, round_number: int, cup_number: int):
-        """Remove race_results rows and reset completed flags for one cup. Used by PATCH correction."""
         cur = self.conn.cursor()
-        race_rows = cur.execute("""
-            SELECT r.id FROM races r
-            JOIN cups   c  ON r.cup_id   = c.id
+        cup_row = cur.execute("""
+            SELECT c.id FROM cups c
             JOIN rounds rd ON c.round_id = rd.id
             WHERE rd.tournament_id = ? AND rd.round_number = ? AND c.cup_number = ?
-            ORDER BY r.race_number
-        """, (tournament_id, round_number, cup_number)).fetchall()
-        race_ids = [row["id"] for row in race_rows]
-        if race_ids:
-            ph = ",".join("?" * len(race_ids))
-            cur.execute(f"DELETE FROM race_results WHERE race_id IN ({ph})", race_ids)
-            cur.execute(f"UPDATE races SET completed=0 WHERE id IN ({ph})", race_ids)
-        self.conn.commit()
-
-    def delete_race_results(self, tournament_id: int, round_number: int,
-                             cup_number: int, race_number: int):
-        """Delete race_results for one race (race_number is 1-indexed) and reset completed=0."""
-        cur = self.conn.cursor()
-        race_row = cur.execute("""
-            SELECT r.id FROM races r
-            JOIN cups   c  ON r.cup_id   = c.id
-            JOIN rounds rd ON c.round_id = rd.id
-            WHERE rd.tournament_id = ? AND rd.round_number = ? AND c.cup_number = ?
-              AND r.race_number = ?
-        """, (tournament_id, round_number, cup_number, race_number - 1)).fetchone()
-        if race_row:
-            cur.execute("DELETE FROM race_results WHERE race_id = ?", (race_row["id"],))
-            cur.execute("UPDATE races SET completed=0 WHERE id = ?", (race_row["id"],))
+        """, (tournament_id, round_number, cup_number)).fetchone()
+        if cup_row:
+            cur.execute("DELETE FROM cup_results WHERE cup_id = ?", (cup_row["id"],))
+            cur.execute("UPDATE cups SET completed=0 WHERE id = ?", (cup_row["id"],))
         self.conn.commit()
 
     def get_cup_results(self, tournament_id: int, round_number: int, cup_number: int) -> list[dict]:
-        """Return all race_results for one cup, annotated with player/team names."""
         rows = self.conn.execute("""
-            SELECT r.race_number,
-                   pl.name  AS player_name,
+            SELECT pl.name  AS player_name,
                    p1.name  AS player1,
                    p2.name  AS player2,
-                   rr.place,
-                   rr.score
-            FROM race_results rr
-            JOIN races   r  ON rr.race_id   = r.id
-            JOIN cups    c  ON r.cup_id     = c.id
+                   cr.score
+            FROM cup_results cr
+            JOIN cups    c  ON cr.cup_id    = c.id
             JOIN rounds  rd ON c.round_id   = rd.id
-            JOIN players pl ON rr.player_id = pl.id
+            JOIN players pl ON cr.player_id = pl.id
             JOIN teams   tm ON (pl.id = tm.player1_id OR pl.id = tm.player2_id)
             JOIN players p1 ON tm.player1_id = p1.id
             JOIN players p2 ON tm.player2_id = p2.id
             WHERE rd.tournament_id = ? AND rd.round_number = ? AND c.cup_number = ?
-            ORDER BY r.race_number, rr.place
+            ORDER BY cr.score DESC
         """, (tournament_id, round_number, cup_number)).fetchall()
         return [dict(r) for r in rows]
 
@@ -311,10 +249,9 @@ class TournamentDB:
                 t.current_round                                   AS rounds_completed,
                 (t.current_round = t.total_rounds
                  AND NOT EXISTS (
-                     SELECT 1 FROM races r
-                     JOIN cups c  ON r.cup_id   = c.id
+                     SELECT 1 FROM cups c
                      JOIN rounds rd ON c.round_id = rd.id
-                     WHERE rd.tournament_id = t.id AND r.completed = 0
+                     WHERE rd.tournament_id = t.id AND c.completed = 0
                  ))                                               AS is_complete
             FROM tournaments t
             ORDER BY t.id DESC
@@ -330,10 +267,9 @@ class TournamentDB:
                 t.current_round                                   AS rounds_completed,
                 (t.current_round = t.total_rounds
                  AND NOT EXISTS (
-                     SELECT 1 FROM races r
-                     JOIN cups c  ON r.cup_id   = c.id
+                     SELECT 1 FROM cups c
                      JOIN rounds rd ON c.round_id = rd.id
-                     WHERE rd.tournament_id = t.id AND r.completed = 0
+                     WHERE rd.tournament_id = t.id AND c.completed = 0
                  ))                                               AS is_complete
             FROM tournaments t
             WHERE t.id = ?
@@ -341,21 +277,15 @@ class TournamentDB:
         return dict(row) if row else None
 
     def get_leaderboard(self, tournament_id: int) -> list[dict]:
-        """
-        Sum every race-result score for each team's two players across all
-        races in the tournament.  Teams are discovered via the cup_teams
-        participation chain (rounds → cups → cup_teams → teams).
-        """
         rows = self.conn.execute("""
             SELECT
-                p1.name                AS player1,
-                p2.name                AS player2,
-                COALESCE(SUM(rr.score), 0) AS total_score
-            FROM race_results rr
-            JOIN races   r  ON rr.race_id  = r.id
-            JOIN cups    c  ON r.cup_id    = c.id
-            JOIN rounds  rd ON c.round_id  = rd.id
-            JOIN players pl ON rr.player_id = pl.id
+                p1.name                        AS player1,
+                p2.name                        AS player2,
+                COALESCE(SUM(cr.score), 0)     AS total_score
+            FROM cup_results cr
+            JOIN cups    c  ON cr.cup_id    = c.id
+            JOIN rounds  rd ON c.round_id   = rd.id
+            JOIN players pl ON cr.player_id = pl.id
             JOIN teams   tm ON (pl.id = tm.player1_id OR pl.id = tm.player2_id)
             JOIN players p1 ON tm.player1_id = p1.id
             JOIN players p2 ON tm.player2_id = p2.id

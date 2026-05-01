@@ -1,6 +1,3 @@
-PLACEMENT_SCORES = {1: 15, 2: 12, 3: 10, 4: 9, 5: 8, 6: 7, 7: 6, 8: 5, 9: 4, 10: 3, 11: 2, 12: 1}
-
-
 class Player:
     def __init__(self, name: str):
         self.name = name
@@ -10,8 +7,8 @@ class Player:
     def total_score(self) -> int:
         return sum(self.scores)
 
-    def record_placement(self, place: int):
-        self.scores.append(PLACEMENT_SCORES.get(place, 0))
+    def record_score(self, score: int):
+        self.scores.append(score)
 
     def __repr__(self):
         return f"Player({self.name}, score={self.total_score})"

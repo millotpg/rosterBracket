@@ -1,41 +1,23 @@
-import random
 from RosterEntry import Player, Team
 
-RACES_PER_CUP = 4
 CUPS_PER_ROUND = 2
-
-
-class Race:
-    def __init__(self, teams: list[Team]):
-        self.teams = teams
-        self.completed = False
-
-    def record_results(self, placements: list[tuple[Player, int]]):
-        for player, place in placements:
-            player.record_placement(place)
-        for team in self.teams:
-            for opponent in self.teams:
-                if opponent is not team:
-                    team.record_match(opponent)
-        self.completed = True
-
-    def __repr__(self):
-        return f"Race({[t.name for t in self.teams]}, completed={self.completed})"
 
 
 class Cup:
     def __init__(self, cup_number: int, teams: list[Team]):
         self.cup_number = cup_number
         self.teams = teams
-        # All races within a cup use the same set of teams
-        self.races: list[Race] = [Race(list(teams)) for _ in range(RACES_PER_CUP)]
+        self.completed = False
 
-    def record_race_results(self, race_idx: int, placements: list[tuple[Player, int]]):
-        self.races[race_idx].record_results(placements)
-
-    @property
-    def completed(self) -> bool:
-        return all(r.completed for r in self.races)
+    def record_results(self, placements: list[tuple[Player, int]]):
+        """placements: list of (player, cup_score) tuples."""
+        for player, score in placements:
+            player.record_score(score)
+        for team in self.teams:
+            for opponent in self.teams:
+                if opponent is not team:
+                    team.record_match(opponent)
+        self.completed = True
 
     def __repr__(self):
         return f"Cup({self.cup_number}, teams={[t.name for t in self.teams]}, completed={self.completed})"
@@ -69,10 +51,8 @@ class Round:
             for i in range(CUPS_PER_ROUND)
         ]
 
-    def record_race_results(
-        self, cup_idx: int, race_idx: int, placements: list[tuple[Player, int]]
-    ):
-        self.cups[cup_idx].record_race_results(race_idx, placements)
+    def record_cup_results(self, cup_idx: int, placements: list[tuple[Player, int]]):
+        self.cups[cup_idx].record_results(placements)
 
     @property
     def completed(self) -> bool:
