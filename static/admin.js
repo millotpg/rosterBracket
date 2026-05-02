@@ -596,6 +596,62 @@ const CHART_COLORS = [
   '#f39c12','#2ecc71','#e91e63','#00bcd4','#8bc34a','#ff7043',
 ];
 
+// Tracks which series is isolated per chart (null = all visible)
+let _chartFocus = {};
+
+function _setChartFocus(chartKey, seriesIdx) {
+  const current = _chartFocus[chartKey];
+  const next = current === seriesIdx ? null : seriesIdx;
+  _chartFocus[chartKey] = next;
+
+  const svg = document.getElementById('chart-' + chartKey);
+  if (svg) {
+    svg.querySelectorAll('.chart-series').forEach((g, i) => {
+      g.style.opacity = next === null || i === next ? '1' : '0.07';
+    });
+  }
+
+  const legend = document.getElementById('legend-' + chartKey);
+  if (legend) {
+    legend.querySelectorAll('.legend-item').forEach((el, i) => {
+      el.classList.toggle('legend-dimmed', next !== null && i !== next);
+      el.classList.toggle('legend-focused', next !== null && i === next);
+    });
+  }
+}
+
+function ordinal(n) {
+  const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function computeComeback(teams, roundNumbers) {
+  if (roundNumbers.length < 2) return null;
+  const n = roundNumbers.length;
+
+  const cumulatives = teams.map(t => {
+    let running = 0;
+    return t.round_scores.map(v => (running += v));
+  });
+
+  const ranks = teams.map(() => []);
+  for (let r = 0; r < n; r++) {
+    const order = teams.map((_, i) => i).sort((a, b) => cumulatives[b][r] - cumulatives[a][r]);
+    order.forEach((ti, rank) => ranks[ti].push(rank + 1));
+  }
+
+  let best = null;
+  teams.forEach((team, i) => {
+    const finalRank = ranks[i][n - 1];
+    const worstRank = Math.max(...ranks[i].slice(0, n - 1));
+    const improvement = worstRank - finalRank;
+    if (improvement > 0 && (!best || improvement > best.improvement)) {
+      best = { team, finalRank, worstRank, worstRoundIdx: ranks[i].indexOf(worstRank), improvement };
+    }
+  });
+  return best;
+}
+
 async function loadStatsTab() {
   const area = document.getElementById('stats-content');
   if (!area) return;
@@ -633,24 +689,43 @@ async function loadStatsTab() {
     };
   });
 
+  // Reset focus state whenever the tab reloads
+  _chartFocus = { team: null, player: null };
+
+  const cb = computeComeback(data.teams, rns);
+  const cbHtml = cb ? `
+    <div class="comeback-card">
+      <div class="comeback-label">🏅 Biggest Comeback</div>
+      <div class="comeback-name">${cb.team.name}</div>
+      <div class="comeback-detail">Was ${ordinal(cb.worstRank)} after Round ${rns[cb.worstRoundIdx]} → finished ${ordinal(cb.finalRank)}</div>
+    </div>` : '';
+
   area.innerHTML = `
+    ${cbHtml}
     <div class="card">
       <h2>Team Performance — Cumulative Score by Round</h2>
-      ${buildLineChart(teamSeries, rns)}
-      ${buildChartLegend(teamSeries, false)}
+      ${buildLineChart(teamSeries, rns, 'team')}
+      ${buildChartLegend(teamSeries, false, 'team')}
     </div>
     <div class="card">
       <h2>Individual Performance — Cumulative Score by Round</h2>
-      ${buildLineChart(playerSeries, rns)}
-      ${buildChartLegend(playerSeries, true)}
+      ${buildLineChart(playerSeries, rns, 'player')}
+      ${buildChartLegend(playerSeries, true, 'player')}
     </div>
     <div class="card">
       <h2>Individual Score Table</h2>
       ${buildPlayerTable(data.players, rns)}
     </div>`;
+
+  // Single delegated click handler — replaces previous each load
+  area.onclick = e => {
+    const item = e.target.closest('.legend-item');
+    if (!item) return;
+    _setChartFocus(item.dataset.chart, parseInt(item.dataset.series));
+  };
 }
 
-function buildLineChart(series, roundNumbers) {
+function buildLineChart(series, roundNumbers, chartKey) {
   const W = 580, H = 260;
   const PAD = { top: 20, right: 20, bottom: 35, left: 52 };
   const plotW = W - PAD.left - PAD.right;
@@ -695,36 +770,39 @@ function buildLineChart(series, roundNumbers) {
   svg += `<line x1="${PAD.left}" y1="${PAD.top + plotH}" x2="${PAD.left + plotW}" y2="${PAD.top + plotH}"
     stroke="#555577" stroke-width="1"/>`;
 
-  // Series lines + dots
-  cumSeries.forEach(s => {
+  // Series lines + dots — each wrapped in a <g> for focus toggling
+  cumSeries.forEach((s, idx) => {
     if (!s.cum.length) return;
     const pts = s.cum.map((v, i) => `${xOf(i)},${yOf(v)}`).join(' ');
+    svg += `<g class="chart-series">`;
     svg += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2"
       ${s.dashed ? 'stroke-dasharray="5,3"' : ''} opacity="0.85"/>`;
     s.cum.forEach((v, i) => {
       svg += `<circle cx="${xOf(i)}" cy="${yOf(v)}" r="3.5" fill="${s.color}" opacity="0.9"/>`;
     });
+    svg += `</g>`;
   });
 
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"
-    xmlns="http://www.w3.org/2000/svg">${svg}</svg>`;
+  return `<svg id="chart-${chartKey}" viewBox="0 0 ${W} ${H}"
+    style="width:100%;height:auto;display:block" xmlns="http://www.w3.org/2000/svg">${svg}</svg>`;
 }
 
-function buildChartLegend(series, showDashNote) {
-  const items = series.map(s => {
+function buildChartLegend(series, showDashNote, chartKey) {
+  const items = series.map((s, i) => {
     const dash = s.dashed
       ? `<svg width="18" height="10" style="vertical-align:middle"><line x1="0" y1="5" x2="18" y2="5" stroke="${s.color}" stroke-width="2" stroke-dasharray="4,2"/></svg>`
       : `<svg width="18" height="10" style="vertical-align:middle"><line x1="0" y1="5" x2="18" y2="5" stroke="${s.color}" stroke-width="2"/></svg>`;
-    return `<span style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;font-size:0.78rem;white-space:nowrap">
+    return `<span class="legend-item" data-chart="${chartKey}" data-series="${i}"
+      style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;font-size:0.78rem;white-space:nowrap">
       ${dash}<span style="color:${s.color}">${s.name}</span>
     </span>`;
   }).join('');
 
   const note = showDashNote
-    ? `<p class="muted" style="font-size:0.75rem;margin-top:0.5rem">Solid line = Player 1 · Dashed = Player 2</p>`
-    : '';
+    ? `<p class="muted" style="font-size:0.75rem;margin-top:0.5rem">Solid line = Player 1 · Dashed = Player 2 &nbsp;·&nbsp; Click a name to isolate</p>`
+    : `<p class="muted" style="font-size:0.75rem;margin-top:0.5rem">Click a name to isolate</p>`;
 
-  return `<div style="margin-top:0.6rem;line-height:1.8">${items}</div>${note}`;
+  return `<div id="legend-${chartKey}" style="margin-top:0.6rem;line-height:1.8">${items}</div>${note}`;
 }
 
 function buildPlayerTable(players, roundNumbers) {

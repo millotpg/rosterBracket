@@ -1,16 +1,16 @@
 /* ── Variables ── */
 :root {
-  --bg:        #1a1a2e;
-  --surface:   #16213e;
-  --surface2:  #0f3460;
-  --accent:    #e94560;
-  --elite:     #4a90e2;
-  --standard:  #7a8d9e;
+  --bg:        #100808;
+  --surface:   #1c1010;
+  --surface2:  #321818;
+  --accent:    #e60012;
+  --elite:     #ffcc00;
+  --standard:  #c09090;
   --gold:      #ffd700;
-  --silver:    #c0c0c0;
+  --silver:    #d0d0d0;
   --bronze:    #cd7f32;
-  --text:      #e8e8f0;
-  --muted:     #8888aa;
+  --text:      #ffffff;
+  --muted:     #997777;
   --radius:    10px;
   --gap:       1rem;
 }
@@ -269,7 +269,7 @@ input:focus, select:focus { outline: 2px solid var(--elite); }
 
 /* ── Banners / alerts ── */
 .info-banner {
-  background: rgba(74, 144, 226, 0.15);
+  background: rgba(255, 204, 0, 0.12);
   border-left: 4px solid var(--elite);
   padding: 0.75rem 1rem;
   border-radius: 0 var(--radius) var(--radius) 0;
@@ -314,7 +314,7 @@ input:focus, select:focus { outline: 2px solid var(--elite); }
 .login-hint { text-align: center; margin-top: 1rem; font-size: 0.85rem; color: var(--muted); }
 
 /* ── Admin header ── */
-.admin-header { background: #0d1b2a; border-bottom: 2px solid var(--accent); }
+.admin-header { background: #1a0505; border-bottom: 2px solid var(--accent); }
 
 /* ── Drag-and-drop group assignment ── */
 .group-assignment {
@@ -373,6 +373,13 @@ input:focus, select:focus { outline: 2px solid var(--elite); }
 .team-chip:hover { border-color: var(--elite); }
 .team-chip.dragging { opacity: 0.4; transform: scale(0.97); cursor: grabbing; }
 
+/* ── Chart legend interaction ── */
+.legend-item { cursor: pointer; border-radius: 4px; padding: 2px 5px; transition: opacity 0.18s; }
+.legend-item:hover { background: rgba(255,255,255,0.06); }
+.legend-item.legend-dimmed { opacity: 0.2; }
+.legend-item.legend-focused { background: rgba(255,255,255,0.1); outline: 1px solid rgba(255,255,255,0.2); }
+.chart-series { transition: opacity 0.2s; }
+
 /* ── Podium display (tournament complete) ── */
 .podium-row {
   display: flex;
@@ -398,3 +405,29 @@ input:focus, select:focus { outline: 2px solid var(--elite); }
 .podium-medal  { font-size: 2rem; }
 .podium-name   { font-weight: 700; font-size: 0.95rem; }
 .podium-score  { font-size: 0.85rem; color: var(--muted); }
+
+/* ── Comeback stat card ── */
+.comeback-card {
+  background: var(--surface2);
+  border-left: 4px solid var(--gold);
+  border-radius: var(--radius);
+  padding: 1rem 1.5rem;
+  margin-bottom: var(--gap);
+}
+.comeback-card .comeback-label {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+.comeback-card .comeback-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--gold);
+  margin-bottom: 0.2rem;
+}
+.comeback-card .comeback-detail {
+  font-size: 0.9rem;
+  color: var(--text);
+}
