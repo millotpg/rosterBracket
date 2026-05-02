@@ -13,6 +13,7 @@
   <button class="tab-btn" data-tab="tourney">Tournament</button>
   <button class="tab-btn" data-tab="results">Results</button>
   <button class="tab-btn" data-tab="teams">Teams</button>
+  <button class="tab-btn" data-tab="stats">Statistics</button>
 </nav>
 
 <!-- ── Tab: Status ── -->
@@ -77,6 +78,13 @@
     <div id="add-team-area"></div>
   </div>
 </div>
+<!-- ── Tab: Statistics ── -->
+<div id="tab-stats" class="tab-panel" hidden>
+  <div class="container" id="stats-content">
+    <p class="muted" style="padding:1rem">Loading…</p>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script src="/static/admin.js"></script>

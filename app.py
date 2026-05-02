@@ -610,6 +610,69 @@ def correct_cup_results(round_number: int, cup_number: int,
 
 
 # ---------------------------------------------------------------------------
+# API routes — statistics
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/statistics")
+def get_statistics(request: Request):
+    """Per-round scores for all teams and players in the active tournament (admin only)."""
+    if not _is_admin(request):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+    if _tournament is None or _db is None:
+        return {"rounds_played": 0, "round_numbers": [], "teams": [], "players": []}
+
+    rows = _db.get_round_scores(_db.tournament_id)
+    round_numbers = sorted({r["round_number"] for r in rows})
+
+    # Aggregate team scores per round (sum of both players)
+    team_scores: dict[str, dict[int, int]] = {}
+    player_scores: dict[str, dict] = {}
+
+    for row in rows:
+        team_name = f"{row['player1']} & {row['player2']}"
+        rn = row["round_number"]
+
+        if team_name not in team_scores:
+            team_scores[team_name] = {}
+        team_scores[team_name][rn] = team_scores[team_name].get(rn, 0) + row["score"]
+
+        pname = row["player_name"]
+        if pname not in player_scores:
+            player_scores[pname] = {"name": pname, "team": team_name, "by_round": {}}
+        player_scores[pname]["by_round"][rn] = row["score"]
+
+    def scores_list(by_round):
+        return [by_round.get(rn, 0) for rn in round_numbers]
+
+    # Sort teams by total score descending for stable color assignment
+    sorted_teams = sorted(
+        team_scores.items(),
+        key=lambda kv: sum(kv[1].values()),
+        reverse=True,
+    )
+
+    # Sort players by total score descending for the table
+    sorted_players = sorted(
+        player_scores.values(),
+        key=lambda p: sum(p["by_round"].values()),
+        reverse=True,
+    )
+
+    return {
+        "rounds_played": len(round_numbers),
+        "round_numbers": round_numbers,
+        "teams": [
+            {"name": name, "round_scores": scores_list(by_round)}
+            for name, by_round in sorted_teams
+        ],
+        "players": [
+            {"name": p["name"], "team": p["team"], "round_scores": scores_list(p["by_round"])}
+            for p in sorted_players
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
 # API routes — past tournament history
 # ---------------------------------------------------------------------------
 

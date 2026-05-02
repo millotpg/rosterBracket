@@ -103,11 +103,12 @@ def populate_cup(round_num, cup):
 
 
 if __name__ == "__main__":
-    populate_users()
-    breakpoint()
-    start_tournament()
+    # populate_users()
+    # breakpoint()
+    # start_tournament()
     for round_num in range(1, 7):
         for cup in range(1, 3):
+            breakpoint()
             populate_cup(round_num, cup)
 
 

@@ -295,5 +295,25 @@ class TournamentDB:
         """, (tournament_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    def get_round_scores(self, tournament_id: int) -> list[dict]:
+        """Per-round score for every player, ordered by round then score desc."""
+        rows = self.conn.execute("""
+            SELECT rd.round_number,
+                   pl.name  AS player_name,
+                   p1.name  AS player1,
+                   p2.name  AS player2,
+                   cr.score
+            FROM cup_results cr
+            JOIN cups    c  ON cr.cup_id    = c.id
+            JOIN rounds  rd ON c.round_id   = rd.id
+            JOIN players pl ON cr.player_id = pl.id
+            JOIN teams   tm ON (pl.id = tm.player1_id OR pl.id = tm.player2_id)
+            JOIN players p1 ON tm.player1_id = p1.id
+            JOIN players p2 ON tm.player2_id = p2.id
+            WHERE rd.tournament_id = ?
+            ORDER BY rd.round_number, cr.score DESC
+        """, (tournament_id,)).fetchall()
+        return [dict(r) for r in rows]
+
     def close(self):
         self.conn.close()

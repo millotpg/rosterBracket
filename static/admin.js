@@ -25,6 +25,8 @@ function activateTab(name) {
     loadResultsTab();
   } else if (name === 'teams') {
     loadTeamsTab();
+  } else if (name === 'stats') {
+    loadStatsTab();
   }
 }
 
@@ -585,4 +587,174 @@ async function addTeam() {
   } catch (e) {
     showMsg('add-team-msg', `Network error: ${e.message}`, 'error');
   }
+}
+
+// ── Statistics tab ────────────────────────────────────────────────────────────
+
+const CHART_COLORS = [
+  '#e94560','#4a90e2','#f5a623','#7ed321','#9b59b6','#1abc9c',
+  '#f39c12','#2ecc71','#e91e63','#00bcd4','#8bc34a','#ff7043',
+];
+
+async function loadStatsTab() {
+  const area = document.getElementById('stats-content');
+  if (!area) return;
+  area.innerHTML = '<p class="muted" style="padding:1rem">Loading…</p>';
+
+  let data;
+  try {
+    const r = await fetch('/admin/statistics');
+    if (!r.ok) { area.innerHTML = '<p class="muted" style="padding:1rem">Could not load statistics.</p>'; return; }
+    data = await r.json();
+  } catch (_) { return; }
+
+  if (data.rounds_played === 0) {
+    area.innerHTML = '<p class="muted" style="padding:1rem">No results submitted yet.</p>';
+    return;
+  }
+
+  const rns = data.round_numbers;
+
+  // Assign colors to teams by rank (index from API, already sorted by total score)
+  const teamColor = {};
+  data.teams.forEach((t, i) => { teamColor[t.name] = CHART_COLORS[i % CHART_COLORS.length]; });
+
+  // Team series — solid lines
+  const teamSeries = data.teams.map(t => ({
+    name: t.name, color: teamColor[t.name], roundScores: t.round_scores, dashed: false,
+  }));
+
+  // Player series — player1 solid, player2 dashed, both share team color
+  const playerSeries = data.players.map(p => {
+    const p1name = p.team.split(' & ')[0];
+    return {
+      name: p.name, color: teamColor[p.team], roundScores: p.round_scores,
+      dashed: p.name !== p1name,
+    };
+  });
+
+  area.innerHTML = `
+    <div class="card">
+      <h2>Team Performance — Cumulative Score by Round</h2>
+      ${buildLineChart(teamSeries, rns)}
+      ${buildChartLegend(teamSeries, false)}
+    </div>
+    <div class="card">
+      <h2>Individual Performance — Cumulative Score by Round</h2>
+      ${buildLineChart(playerSeries, rns)}
+      ${buildChartLegend(playerSeries, true)}
+    </div>
+    <div class="card">
+      <h2>Individual Score Table</h2>
+      ${buildPlayerTable(data.players, rns)}
+    </div>`;
+}
+
+function buildLineChart(series, roundNumbers) {
+  const W = 580, H = 260;
+  const PAD = { top: 20, right: 20, bottom: 35, left: 52 };
+  const plotW = W - PAD.left - PAD.right;
+  const plotH = H - PAD.top - PAD.bottom;
+  const n = roundNumbers.length;
+
+  // Compute cumulative scores per series
+  const cumSeries = series.map(s => {
+    let running = 0;
+    return { ...s, cum: s.roundScores.map(v => (running += v)) };
+  });
+
+  const maxVal = Math.max(...cumSeries.flatMap(s => s.cum), 1);
+
+  const xOf = i => PAD.left + (n > 1 ? (i / (n - 1)) * plotW : plotW / 2);
+  const yOf = v => PAD.top + plotH - (v / maxVal) * plotH;
+
+  // Gridlines + Y labels
+  let svg = '';
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = (maxVal * i / yTicks);
+    const y = yOf(v);
+    svg += `<line x1="${PAD.left}" y1="${y}" x2="${PAD.left + plotW}" y2="${y}"
+      stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
+    svg += `<text x="${PAD.left - 6}" y="${y + 4}" text-anchor="end"
+      font-size="10" fill="#8888aa">${Math.round(v)}</text>`;
+  }
+
+  // X axis labels
+  roundNumbers.forEach((rn, i) => {
+    const x = xOf(i);
+    svg += `<line x1="${x}" y1="${PAD.top}" x2="${x}" y2="${PAD.top + plotH}"
+      stroke="rgba(255,255,255,0.06)" stroke-width="1"/>`;
+    svg += `<text x="${x}" y="${H - 6}" text-anchor="middle"
+      font-size="10" fill="#8888aa">R${rn}</text>`;
+  });
+
+  // Axis borders
+  svg += `<line x1="${PAD.left}" y1="${PAD.top}" x2="${PAD.left}" y2="${PAD.top + plotH}"
+    stroke="#555577" stroke-width="1"/>`;
+  svg += `<line x1="${PAD.left}" y1="${PAD.top + plotH}" x2="${PAD.left + plotW}" y2="${PAD.top + plotH}"
+    stroke="#555577" stroke-width="1"/>`;
+
+  // Series lines + dots
+  cumSeries.forEach(s => {
+    if (!s.cum.length) return;
+    const pts = s.cum.map((v, i) => `${xOf(i)},${yOf(v)}`).join(' ');
+    svg += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2"
+      ${s.dashed ? 'stroke-dasharray="5,3"' : ''} opacity="0.85"/>`;
+    s.cum.forEach((v, i) => {
+      svg += `<circle cx="${xOf(i)}" cy="${yOf(v)}" r="3.5" fill="${s.color}" opacity="0.9"/>`;
+    });
+  });
+
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"
+    xmlns="http://www.w3.org/2000/svg">${svg}</svg>`;
+}
+
+function buildChartLegend(series, showDashNote) {
+  const items = series.map(s => {
+    const dash = s.dashed
+      ? `<svg width="18" height="10" style="vertical-align:middle"><line x1="0" y1="5" x2="18" y2="5" stroke="${s.color}" stroke-width="2" stroke-dasharray="4,2"/></svg>`
+      : `<svg width="18" height="10" style="vertical-align:middle"><line x1="0" y1="5" x2="18" y2="5" stroke="${s.color}" stroke-width="2"/></svg>`;
+    return `<span style="display:inline-flex;align-items:center;gap:5px;margin:3px 10px 3px 0;font-size:0.78rem;white-space:nowrap">
+      ${dash}<span style="color:${s.color}">${s.name}</span>
+    </span>`;
+  }).join('');
+
+  const note = showDashNote
+    ? `<p class="muted" style="font-size:0.75rem;margin-top:0.5rem">Solid line = Player 1 · Dashed = Player 2</p>`
+    : '';
+
+  return `<div style="margin-top:0.6rem;line-height:1.8">${items}</div>${note}`;
+}
+
+function buildPlayerTable(players, roundNumbers) {
+  const medals = ['🥇','🥈','🥉'];
+  const podiumCls = ['podium-gold','podium-silver','podium-bronze'];
+
+  const roundHeaders = roundNumbers.map(rn => `<th>R${rn}</th>`).join('');
+  const rows = players.map((p, i) => {
+    const total = p.round_scores.reduce((a, b) => a + b, 0);
+    const roundCells = p.round_scores.map(s =>
+      `<td class="score-cell">${s > 0 ? s : '<span class="muted">—</span>'}</td>`
+    ).join('');
+    const rank = i < 3 ? `${medals[i]} ${i + 1}` : i + 1;
+    return `<tr class="${i < 3 ? podiumCls[i] : ''}">
+      <td class="rank-cell">${rank}</td>
+      <td>${p.name}</td>
+      <td class="muted" style="font-size:0.82rem">${p.team}</td>
+      ${roundCells}
+      <td class="score-cell" style="font-weight:700">${total}</td>
+    </tr>`;
+  }).join('');
+
+  return `<table class="lb-table" style="font-size:0.88rem">
+    <thead>
+      <tr>
+        <th>#</th><th>Player</th><th>Team</th>
+        ${roundHeaders}
+        <th style="text-align:right">Total</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`;
 }
